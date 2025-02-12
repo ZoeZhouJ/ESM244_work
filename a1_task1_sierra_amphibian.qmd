@@ -1,0 +1,195 @@
+---
+title: "Assignment 1 Task 1 Sierra Amphibians"
+author: "Zoe Zhou"
+format: 
+  html:
+    code-fold: true
+    embed-resources: true
+    toc: true
+execute:
+  warning: false
+  message: false
+theme: minty
+---
+## Introduction
+
+This analysis examines population trends of the endangered mountain yellow-legged frog (*Rana muscosa*). Two visualizations were created: 
+
+1. **Annual Trends by Life Stage**: A graph of yearly total counts of adults, subadults, and tadpoles across all water bodies (excluding egg masses). 
+
+2. **Top 5 Lakes by Adult/Subadult Counts**: A bar chart showing total counts in the five lakes with the highest populations, excluding tadpoles and anonymizing lake IDs (e.g., “Lake 10025”). 
+
+These graphs provide insights into population dynamics and key habitats for conservation.
+
+## Dataset
+**Amphibian Abundance Data**
+
+Source: [The Sierra Lakes Inventory Project](https://portal.edirepository.org/nis/metadataviewer?packageid=edi.577.2)
+
+The Sierra Lakes Inventory Project (SLIP) was a research endeavor that ran from 1995-2002 and has supported research and management of Sierra Nevada aquatic ecosystems and their terrestrial interfaces. This dataset described the physical characteristics of and surveyed aquatic communities for >8,000 lentic water bodies in the southern Sierra Nevada, including lakes, ponds, marshes, and meadows.
+
+
+## Set-up
+We will use the following libraries and set-up through this analysis
+
+```{r}
+# Import libraries
+library(tidyverse)
+library(tidymodels)
+library(here)
+library(cowplot)
+library(readxl)
+library(patchwork)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+
+```
+
+## Load in Data
+Use basic command to explore data
+```{r}
+#| fold: false
+df <- read_excel('data/sierra_amphibians.xlsx')
+#head(df)
+summary(df)
+```
+## Part 1 
+Provide a graph of total mountain yellow-legged frog (Rana muscosa) count each year across all water bodies, by life stage excluding the ‘EggMass’ level. 
+
+Data Wranging Pseudocode 
+
+- drop columns or select columns
+
+- filter out EggMass in amphibian_life_stage
+
+- select by species
+
+- check for na values
+
+- convert data to datetime
+
+- group by year and life stage
+
+- get counts function
+
+- ungroup()
+
+- plot by year on x, counts on y, color by life stages 
+
+Preview cleaned dataframe
+```{r}
+#| fold: false
+# Clean dataframe
+df_ramu <- df %>% 
+  select(amphibian_species, amphibian_life_stage, amphibian_number, survey_date, lake_id) %>% 
+  drop_na() %>% 
+  filter(amphibian_species == "RAMU", amphibian_life_stage != "EggMass") 
+
+# Convert timeseries to  datetime variables
+df_ramu$survey_date <- as.factor(lubridate::year(df_ramu$survey_date)) # factorize year column
+
+# group by year to get count 
+df_ramu_sum <- df_ramu %>% 
+  group_by(survey_date, amphibian_life_stage) %>% 
+  summarise(total_counts=sum(amphibian_number, na.rm= TRUE)) %>% 
+  ungroup()
+
+# Check data frame
+knitr::kable(head(df_ramu_sum))
+```
+Plot histogram
+```{r}
+# Plot histograms
+plot1 <- ggplot(data=df_ramu_sum, mapping = aes(x=survey_date, y=total_counts, fill=amphibian_life_stage)) +
+  geom_col() + 
+  labs(
+    title = "Population of Rana muscosa by Year",
+    x = "Survey Year",
+    y = "Total Counts of Rana muscosa"
+  )+
+  theme_light()+
+  theme(
+    plot.title = element_text(face = "bold", size = 10),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    axis.text.y = element_text(size = 10),
+    axis.title = element_text(size = 11),
+    panel.grid = element_blank(),
+    legend.position = c(0.4, 0.8)
+  )
+print(plot1)
+```
+## Part 2 
+Create a column graph containing total counts (over all years of the study) of combined adult and subadult endangered mountain yellow-legged frogs (Rana muscosa) observed in the 5 lakes with the greatest total observed counts. 
+
+Data Wrangling
+```{r}
+#| fold: false
+# Filter out tadpoles
+df_ramu_adult <- filter(df_ramu, amphibian_life_stage != "Tadpole") 
+
+# group by lake to get count 
+ramu_lake <- df_ramu_adult %>% 
+  group_by(lake_id) %>% 
+  summarise(total_counts=sum(amphibian_number, na.rm= TRUE)) %>% 
+  ungroup() %>% 
+  arrange(desc(total_counts))
+
+# Check top 5 lakes
+knitr::kable(head(ramu_lake, 5))
+
+```
+Prepare for plotting
+```{r}
+#| fold: false
+# Prepare for plotting
+top_lakes <- ramu_lake %>%
+  mutate(lake_label = paste("Lake", lake_id)) %>% 
+  mutate(lake_label = fct_reorder(lake_label, total_counts, .desc = TRUE)) %>%  
+  slice_head(n = 5)
+
+# Sort by total_counts and factorize lake id
+#ramu_lake$lake_id <- factor(ramu_lake$lake_id, #levels=ramu_lake$lake_id[order(-ramu_lake$total_counts)])
+#top_lakes <- ramu_lake %>% 
+#  slice_head(n=5)# %>% 
+# print(top_lakes)
+# Plot histograms
+plot2 <- ggplot(data=top_lakes, mapping = aes(x=lake_label, y=total_counts)) +
+  geom_col(fill = "steelblue") + 
+  labs(
+    title = "Rana muscosa Lake Population",
+    x = "Lake ID",
+    y = "Total Counts of RAMU"
+  ) +
+    geom_text(aes(label = total_counts), 
+            vjust = -0.5)+
+  lims(y = c(0, 2600))+
+  theme_light()+
+  theme(
+    plot.title = element_text(face = "bold", size = 10),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    axis.text.y = element_text(size = 10),
+    axis.title = element_text(size = 11),
+    panel.grid = element_blank()
+  )
+print(plot2)
+```
+Final Visualization
+```{r}
+#| fig-cap: Temporal and spatial distribution of Rana muscosa populations. Panel on the left shows the overall population trend across all surveyed lakes from 1995 to 2002. Panel on the right displays the five lakes with the highest recorded RAMU counts, highlighting significant spatial variation in population densities across different water bodies.
+
+# Combine plots using patchwork
+combined_plot <- plot1 + plot2 +
+  plot_layout(widths = c(15, 15)) +
+  plot_annotation(
+    title = "Population Trends of Rana muscosa Across Sierra Lakes",
+    theme = theme(
+      plot.title = element_text(size = 16, face = "bold", hjust = 0.5)
+    )
+  )
+
+# Display combined plot
+combined_plot
+
+```
+

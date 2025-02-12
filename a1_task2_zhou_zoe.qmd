@@ -1,0 +1,213 @@
+---
+title: "Assignment 1 Task 2 Model Selection"
+author: "Zoe Zhou"
+format: 
+  html:
+    code-fold: true
+    embed-resources: true
+    toc: true
+execute:
+  warning: false
+  message: false
+theme:  minty
+---
+## About
+### Introduction
+Oxygen saturation in seawater is a crucial indicator of marine ecosystem health. Using data from the California Cooperative Oceanic Fisheries Investigations (CalCOFI) program, this analysis will compare two linear regression models that predict oxygen saturation based on various physical and chemical parameters. Model selection will be performed using both the Akaike Information Criterion (AIC) and cross-validation to determine which combination of predictors provides the most effective model.
+
+### Objectives
+
+- Load and prepare a subset of CalCOFI seawater sample data
+
+- Develop two competing linear regression models for predicting oxygen saturation
+
+- Compare model performance using AIC, BIC and cross-validation methods
+
+- Determine the most effective model for predicting oxygen saturation
+
+### Data 
+The data comes from CalCOFI's extensive oceanographic database, which has been collecting measurements since 1949. The dataset includes temperature, salinity, oxygen, phosphate, and other chemical parameters, providing a comprehensive view of the California Current System's properties. Through this analysis, we aim to identify which oceanographic variables best predict oxygen saturation in these coastal waters.
+
+**Citation**: Seawater sample data downloaded from  [CalCOFI](https://calcofi.org/)  Accessed 1/17/2025.
+
+**Metadata:**
+
+| Column   | Units                                          | Description                                           |
+|----------|------------------------------------------------|-------------------------------------------------------|
+| o2sat    | percent saturation                             | Oxygen Saturation                                      |
+| t_deg_c  | °C                                             | Temperature of Water                                   |
+| salinity | Practical Salinity Scale, 1978 (UNESCO, 1981a) | Salinity of water                                     |
+| depth_m  | meters                                         | Depth in meters                                        |
+| chlor_a  | µg/L                                           | Acetone extracted chlorophyll-a measured fluorometrically |
+| po4u_m   | micro Moles per Liter                          | Phosphate concentration                                |
+| no2u_m   | micro Moles per Liter                          | Nitrite concentration                                  |
+
+## Set-up
+We will use the following libraries and set-up through this analysis
+```{r}
+#| fold: True
+# Import libraries
+library(tidyverse)
+library(tidymodels)
+library(here)
+library(cowplot)
+library(readxl)
+library(patchwork)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+# library(AICcmodavg) #taking forever to install
+```
+## Load in Data
+Use basic command to explore data
+```{r}
+df <- read_csv('data/calcofi_seawater_samples.csv')
+knitr::kable(head(df))
+#knitr::kable(summary(df))
+```
+
+```{r}
+#| fold: false
+# Set seed for reproducibility
+set.seed(123)
+```
+
+
+## Fit two linear models 
+
+1. Oxygen saturation as a function of water temperature, salinity, and phosphate concentration.
+```{r}
+#| fold: false
+# Fit model using linear regression
+f_1 <- o2sat ~ t_deg_c + salinity + po4u_m
+model1 <- lm(f_1, data = df)
+```
+
+2. Oxygen saturation as a function of water temp, salinity, phosphate concentration, and depth.
+```{r}
+#| fold: false
+# fit model 2
+f_2 <- o2sat ~ t_deg_c + salinity + po4u_m + depth_m
+model2 <- lm(f_2, data=df)
+
+# View summaries
+summary(model1)
+summary(model2)
+
+```
+## Model Comparison
+From the summary statistics, both model performed well. Model 1 (without depth) demonstrates very strong model fit with R² = 0.955 (95.5% of variance explained). Overall fit of model 2 (with depth) performed slightly better with R² = 0.957 (95.7% of variance explained). The effect of phosphate remained strong in both models. The addition of depth provides a small improvement.
+
+In the next step, we use information criteria (AIC/BIC) and 10-K cross validation to evaluate model with testing data. 
+
+**1. AIC**
+```{r}
+# Using base R's AIC function
+aic_1 <- AIC(model1)
+aic_2 <- AIC(model2)
+
+# Print individual values
+cat("AIC for Model 1 (without depth):", aic_1, "\n")
+cat("AIC for Model 2 (with depth):", aic_2, "\n")
+
+```
+AIC suggests model 2 is the better model. 
+
+**2. BIC**
+```{r}
+bic_1 <- BIC(model1)
+bic_2 <- BIC(model2)
+```
+The Bayesian Information Criterion (BIC) values for our two models show that Model 2 (including depth) has a BIC of `r bic_2` while Model 1 (without depth) has a BIC of `r bic_1`. Given this small difference, BIC suggests there's no meaningful advantage to including depth in the model, despite what we saw with AIC. 
+
+Since these two methods provides contradicting results, we use the third method: 10-fold cross validation on the two models.
+
+**3. 10-K CV**
+use sample in tidyverse structure to group the data into different folds.
+```{r}
+# sample 10 folds
+folds <- 10
+fold_vec <- rep(1:folds,length.out=nrow(df))
+df_fold <- df |> 
+  mutate(fold=sample(fold_vec, size=n(), replace=FALSE))
+
+# Verify folds are balanced
+table(df_fold$fold)
+```
+**Pseudocode**
+
+1. Create dataframes called `test_df` and `train_df` that split the data into a train or test sample
+
+2. Now fit each model to the training set using the `lm()`. Name each model `training_lmX` where X is the number of the formula.
+
+3. `predict()` uses R models to run predictions with new data.
+
+4. Calculate the RMSE of the first fold test predictions. Hint: Use summarize to condense the `predict_test` dataframe.
+
+5. Let's use a for loop to iterate over the folds 
+
+6. Create a nested for-loop (a for loop inside another for loop) to perform multiple iterations of your 10-fold cross validation, with different random folds assigned for each iteration.  
+```{r}
+kfold_cv<-function(i,df,formula){
+  
+  # Step 1: split data into train and test
+  kfold_test_df <- df %>% 
+    filter(fold == i)
+  kfold_train_df <- df %>% 
+    filter(fold != i)
+  # Step 2: fit training set
+  kfold_lm <- lm(formula, data=kfold_train_df)
+  # Step 3: make prediction
+  kfold_pred_df <- kfold_test_df %>% 
+    mutate(mdl = predict(kfold_lm, kfold_test_df))
+  # Step 4: calculate RMSE
+  kfold_rmse <- kfold_pred_df |>
+    summarize(rmse_mdl = sqrt(mean((o2sat - mdl)^2)))
+                #rmse(o2sat, mdl)) 
+  
+  #rmse_vec[i]<-kfold_rmse$rmse_mdl
+
+  # for summary: calculate average rmse
+  #mean(rmse_vec)
+  return(kfold_rmse$rmse_mdl)
+}
+```
+Use `purr` to run fuction
+```{r}
+# map_dbl() runs across all function
+rmse_df<-data.frame(j=1:folds) |> mutate(rmse_mdl1=map_dbl(j, kfold_cv, df=df_fold,formula=f_1),
+                                         rmse_mdl2=map_dbl(j,kfold_cv,df=df_fold,formula=f_2))
+# Use root mean squared error to evaluate                                   
+rmse_means<-rmse_df |> 
+  summarize(across(starts_with('rmse'),mean))
+# Print results
+knitr::kable(rmse_means)
+```
+The difference in RMSE is small (about 0.09), but Model 2 (with depth) performs slightly better with a lower RMSE. 
+
+## Compare evaluation metircs
+```{r}
+# Create summary table of all comparison methods
+results_summary <- data.frame(
+  Method = c("AIC", "BIC", "CV RMSE"),
+  Model1_value = c(AIC(model1), BIC(model1), rmse_means$rmse_mdl1),
+  Model2_value = c(AIC(model2), BIC(model2), rmse_means$rmse_mdl2)
+)
+
+# Display formatted table
+knitr::kable(results_summary,
+             digits = 3,
+             col.names = c("Metric", 
+                          "Model 1 (without depth)", 
+                          "Model 2 (with depth)"),
+             caption = "Comparison of Model Performance Metrics")
+
+```
+## Model Selection
+Given these results, I would choose Model 2 (with depth) for it performs better or equally well across all evaluation metrics. 
+
+**Final Model:**
+
+$$ 
+o2sat = 144.07 - 0.750(t\_deg\_c) - 0.439(salinity) - 37.712(po4u\_m) - 0.032(depth\_m)
+$$
