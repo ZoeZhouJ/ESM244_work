@@ -1,0 +1,194 @@
+---
+title: "Florida Palmetto Species Classifier"
+author: "Zoe Zhou"
+format: 
+  html:
+    code-fold: true
+    embed-resources: true
+    toc: true
+execute:
+  warning: false
+  message: false
+theme: minty
+---
+![Saw-palmetto postfire sprouts, photo by Daniel Oines](https://www.fs.usda.gov/database/feis/plants/shrub/serrep/sprout.jpg)
+
+## About
+Saw palmetto (*Serenoa repens*) and scrub palmetto (*Sabal etonia*) are both keystone species in south-central Florida that support the pine flatwoods ecosystem. This analysis uses logistic regression to classify these two native palmetto species based on plant characteristics. The goal is to evaluate whether variables such as plant height, canopy dimensions, and the number of green leaves can effectively predict species classification. The highlight of this study includes data visualization, logistic regression modeling, and models assessment with cross-validation. 
+
+### Data Summary
+
+**Palmetto Monitoring Data**
+The dataset used for this analysis can be accessed through [EDS Data Portal](https://portal.edirepository.org/nis/mapbrowse?packageid=edi.317.1). It provides detailed measurements of the growth and survival characteristics of Serenoa repens and Sabal etonia, two prominent palmetto species in Florida. The specific variables included in the dataset are:
+
+| **Column Name** | **Description**                                                                                     | **Type**   |
+|------------------|-----------------------------------------------------------------------------------------------------|------------|
+| `year`           | Sample year.                                                                                       | date       |
+| `plant`          | Plant ID number.                                                                                   | float      |
+| `species`        | Palmetto species (*Serenoa repens* or *Sabal etonia*).                                              | string     |
+| `site`           | Site name.                                                                                         | string     |
+| `habitat`        | Habitat type.                                                                                      | string     |
+| `treatment`      | Experimental treatment applied.                                                                     | string     |
+| `survival`       | Survival from previous census (1981–2017).                                                         | string     |
+| `height`         | Maximum height (1981–2017).                                                                         | float      |
+| `length`         | Widest length of the canopy (1981–2017).                                                            | float      |
+| `width`          | Widest width of the canopy perpendicular to the canopy length (1981–2017).                         | float      |
+| `green_lvs`      | Count of green leaves (1981–2017).                                                                  | float      |
+| `scape`          | Count of inflorescence scapes (1981–2017).                                                          | float      |
+| `new_lvs`        | Count of new leaves (1982–2017).                                                                    | float      |
+| `biomass`        | Calculated biomass estimate of dry mass (1989–2017).                                                | float      |
+| `canopy`         | Average percent canopy cover across the four cardinal directions, taken in January 1993.            | float      |
+| `lf_long`        | Leaf longevity (1990–1997).                                                                         | float      |
+| `comments`       | Notes made in 2017.                                                                                 | string     |
+
+
+
+### Data Citation:
+
+Abrahamson, W.G. 2019. Survival, growth and biomass estimates of two dominant palmetto species of south-central Florida from 1981 - 2017, ongoing at 5-year intervals ver 1. Environmental Data Initiative. [](https://doi.org/10.6073/pasta/f2f96ec76fbbd4b9db431c79a770c4d5)
+
+### Analysis Outline
+1. Data Exploration
+2. Train Logistic Regression Models
+3. K-fold Cross-Validation 
+4. Model Assessment
+5. Predict with Best Performaing Model
+6. Test Classification Accuracy 
+
+## Set-up
+We will use the following libraries and set-up through this analysis
+```{r}
+# Import libraries
+library(tidyverse)
+library(tidymodels)
+library(here)
+library(cowplot)
+library(patchwork)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+library(kableExtra)
+```
+
+## Data Exploration 
+From the metadata, code 1 represents Serenoa repens, code 2 represents Sabal etonia. We will first load the dataset and preprocess the data by selecting the relevant columns and removing missing values, then factorize the string type species column into dummy variables: 0 for Serenoa repens and 1 for Sabal etonia.
+```{r}
+# Load the dataset
+df <- read_csv(here("data", "palmetto.csv"))
+# Preprocess data
+df_clean <- df %>% 
+  select(species, height, length, width, green_lvs) %>%
+  drop_na() %>%
+  mutate(species = factor(species, levels = c('1','2'), labels = c(0, 1)))
+kable(head(df_clean))
+```
+Visualize differences in plant characteristics between two species:
+
+Both species exhibit overlapping distributions for height, width, and length, indicating these variables alone may not perfectly distinguish between Serenoa repens and Sabal etonia.
+- Height (Figure 1): The height distribution of Sabal etonia is slightly higher than that of Serenoa repens.
+- Width (Figure 2): Sabal etonia shows a slightly higher peak in the middle range (100–120 cm) compared to Serenoa repens.
+- Length (Figure 3): Significant overlap exists, but Sabal etonia tends to grow longer (100–200 cm), while Serenoa repens is more concentrated in shorter lengths (<200 cm).
+- Green Leaves (Figure 4): Serenoa repens generally has more green leaves than Sabal etonia, highlighting a potential growth pattern difference.
+```{r}
+##| fig-cap: "Figure 1: Histogram of Height by Species"
+#| fig-subcap: "This histogram shows the distribution of plant height (in cm) for two species of palmetto: Serenoa repens (red bars) and Sabal etonia (blue bars). The x-axis represents plant height, while the y-axis represents the count of plants within each height bin."
+
+# height comparison
+height <- ggplot(df_clean, aes(x=height, fill = species)) +
+  geom_histogram(position ="dodge", alpha = 0.8) +
+  labs(title = "Height Distribution by Species", 
+       x = "Height (cm)", 
+       y = "Count",
+       fill = "Species") +
+  scale_fill_manual(values = c("0" = "salmon", "1" = "skyblue"),
+                    labels = c("Serenoa repens", "Sabal etonia")) +
+  theme_minimal() +
+  theme(legend.position = "none") 
+
+#ggplot(df_clean, aes(x=height, fill = species)) +
+#  geom_histogram(position ="identity", alpha = 0.5)
+
+##| fig-cap: "Figure 2: Histogram of Width (in cm) by Species"
+#| fig-subcap: "This histogram shows the distribution of plant width (in cm) for two species of palmetto: Serenoa repens (red bars) and Sabal etonia (blue bars). The x-axis represents plant height, while the y-axis represents the count of plants within each height bin."
+# width comparison
+width <- ggplot(df_clean, aes(x=width, fill = species)) +
+  geom_histogram(position ="dodge", alpha = 0.8) +
+  labs(title = "Width Distribution by Species", 
+       x = "Width (cm)", 
+       y = "Count",
+       fill = "Species") +
+  scale_fill_manual(values = c("0" = "salmon", "1" = "skyblue"),
+                    labels = c("Serenoa repens", "Sabal etonia")) +
+  theme_minimal() +
+  theme(legend.position = "none") 
+
+##| fig-cap: "Figure 3: Histogram of Maximum Canopy Length by Species"
+#| fig-subcap: "The chart highlights subtle differences in growth patterns between the two species, with Sabal etonia tending to grow longer canopy than Serenoa repens. "
+# length comparison
+length <- ggplot(df_clean, aes(x=length, fill = species)) +
+  geom_histogram(position ="dodge", alpha = 0.8) +
+  labs(title = "Length Distribution by Species", 
+       x = "Length (cm)", 
+       y = "Count",
+       fill = "Species") +
+  scale_fill_manual(values = c("0" = "salmon", "1" = "skyblue"),
+                    labels = c("Serenoa repens", "Sabal etonia")) +
+  theme_minimal() +
+  theme(legend.position = "none") 
+
+##| fig-cap: "Figure 4: Green Leaves Counts by Species"
+#| fig-subcap: "Differences in growth patterns between the two species is shown here, with Sabal etonia tending to grow less green leaves than Serenoa repens."
+# leaves comparison
+leaves <- ggplot(df_clean, aes(x=green_lvs, fill = species)) +
+  geom_histogram(position ="dodge", alpha = 0.8) +
+  labs(title = "Number of Green Leaves by Species", 
+       x = "Number of Green Leaves", 
+       y = "Count",
+       fill = "Species") +
+  scale_fill_manual(values = c("0" = "salmon", "1" = "skyblue"),
+                    labels = c("Serenoa repens", "Sabal etonia")) +
+  theme_minimal() +
+  theme(legend.position = "right") 
+
+#| fig-cap: "Figure 1 - 4: Plant Characteristics by Species"
+height + width + length + leaves
+
+```
+
+We will create paired scatter plots to visualize the relationship between plant characteristics. The scatter plots show the relationship between green leaves and width (Figure 5) and height and canopy length (Figure 6). The plots are colored by species to highlight differences in growth patterns. The scatter plot of green leaves vs. width (Bottom-Left) shows less overlap compared to the height vs. canopy length plot (Bottom-Right), indicating that green leaves and width may be more useful for species classification. However, all variables exhibit some degree of overlap, emphasizing the need for a combination of predictors to improve classification accuracy.
+```{r}
+#| fig-cap: "Figure 5 & 6: Scatter Plots of Paired Plant Characterstics"
+# leaves vs. width
+p1 <- ggplot(df_clean, aes(x = width, y = green_lvs, color = species)) +
+  geom_point(alpha = 0.6) +
+  labs(
+    title = "Green Leaves vs. Width by Species",
+    x = "Width (cm)",
+    y = "Number of Green Leaves",
+    color = "Species"
+  ) +
+  theme(legend.position = "none") +
+  scale_color_manual(values = c("0" = "salmon", "1" = "skyblue"),
+                    labels = c("Serenoa repens", "Sabal etonia")) 
+
+# Height vs. Length
+p2 <- ggplot(df_clean, aes(x = height, y = length, color = species)) +
+  geom_point(alpha = 0.6) +
+  labs(
+    title = "Height vs. Canopy Length by Species",
+    x = "Height (cm)",
+    y = "Max Canopy Length (cm)",
+    color = "Species"
+  ) +
+  scale_color_manual(values = c("0" = "salmon", "1" = "skyblue"),
+                    labels = c("Serenoa repens", "Sabal etonia")) +
+  theme(legend.position = "right") 
+p1/p2
+```
+### Data Split 
+## Train Logistic Regression Models
+Split the data into training and testing sets, 
+
+
+
+
