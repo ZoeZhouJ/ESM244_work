@@ -1,0 +1,180 @@
+---
+title: "Agglomerative Hierarchical Clustering for Water Chemistry"
+author: "Zoe Zhou"
+format: 
+  html:
+    code-fold: true
+    embed-resources: true
+    toc: true
+execute:
+  warning: false
+  message: false
+theme: Flatly
+---
+![Map of the SBC LTER study domain](https://sbclter.msi.ucsb.edu/assets/img/research/map_forest_composite.png)
+
+### About
+
+The goal of this analysis is to explore patterns in water chemistry across sites in the Santa Barbara Coastal drainage area using **agglomerative hierarchical clustering**. This method groups sites based on their similarities by starting with each site as its own cluster and merging the most similar clusters step by step. Two approaches will be applied: **complete linkage**, which merges clusters based on the largest distance between their points, creating compact groups, and **single linkage**, which uses the smallest distance between points, often forming chain-like clusters. The resulting dendrograms will visually represent the clustering structure, helping to identify groupings among the sites based on their water chemistry profiles. 
+
+### Data
+
+The dataset used for this analysis is **Stream chemistry in the Santa Barbara Coastal drainage area**, which contains water chemistry data collected from various sites in the Santa Barbara Coastal region. The dataset has been maintained since 2000 and provides detailed chemical measurements for streams in the area. The data is sourced from the Santa Barbara Coastal Long-Term Ecological Research (SBC LTER) program and was created by John Melack. The dataset is available through the Environmental Data Initiative and can be cited as follows:
+
+**Citation**:
+Santa Barbara Coastal LTER and J. Melack. 2019. SBC LTER: Land: Stream chemistry in the Santa Barbara Coastal drainage area, ongoing since 2000 ver 16. [Environmental Data Initiative](https://doi.org/10.6073/pasta/67a558a24ceed9a0a5bf5e46ab841174) 
+
+### Analysis Outline
+
+1. Data wrangling
+2. Calculate euclidean distance matrix
+3. Hierarchical clustering with complete linkage
+4. Generate dendrogram
+5. Hierarchical clustering with single linkage
+6. Generate tanglegram
+
+### Step 1. Set Up and Data Summary
+
+The following libraries will be used for data manipulation, visualization, and clustering. 
+
+```{r}
+library(tidyverse)
+library(patchwork)
+library(skimr)
+# Packages for cluster analysis:
+library(NbClust)
+library(cluster)
+library(factoextra)
+library(dendextend)
+library(ggdendro)
+```
+
+Load the dataset and convert -999 values to NA as specified in the dataset documentation. Provide data summary after preliminary date exploration.
+
+| **Column Name**          | **Definition**                                                                                                  |
+|---------------------------|----------------------------------------------------------------------------------------------------------------|
+| `site_code`              | 2-letter site ID + 2 numbers reflecting relative distance upstream                                              |
+| `timestamp_local`        | Date sample was collected in Pacific Standard Time (PST). Offset to UTC is -08:00                              |
+| `NH4_uM`                 | Ammonium (measured in micro-moles per liter)                                                                   |
+| `NO3_uM`                 | Nitrate (measured as nitrite + nitrate in micro-moles per liter)                                               |
+| `PO4_uM`                 | Phosphorus (measured as soluble reactive phosphorus (SRP) in micro-moles per liter)                           |
+| `TDN_uM`                 | Total dissolved nitrogen (dissolved organic nitrogen + nitrate + ammonium, measured in micro-moles per liter)  |
+| `TDP_uM`                 | Total dissolved phosphorus (dissolved organic phosphorus + phosphate, measured in micro-moles per liter)       |
+| `TPC_uM`                 | Total particulate carbon (particulate organic carbon, measured in micro-moles per liter)                      |
+| `TPN_uM`                 | Total particulate nitrogen (particulate organic nitrogen, measured in micro-moles per liter)                  |
+| `TPP_uM`                 | Total particulate phosphorus (measured in micro-moles per liter)                                               |
+| `TSS_mg_per_L`           | Total suspended solids (measured in milligrams per liter, mg/L)                                                |
+| `Spec_Cond_uS_per_cm`    | Specific conductivity (measured at 25°C in micro-Siemens per cm, uS/cm)                                        |
+
+
+<details>
+<summary>Click here to expand summary table</summary>
+
+```{r}
+df <- read_csv("data/stream_chemistry.csv", na = "-999")
+#head(df)
+#summary(df)
+skim(df)
+```
+</details>
+
+### Step 2: Data Wrangling 
+
+Note that this dataset contains a lot of NAs. Identify columns with more than 50% missing values and drop them. Use `summary()` to inspect the dataset and decide how to handle the remaining missing values (e.g., listwise deletion or summarizing with `na.rm = TRUE`).
+
+```{r}
+# drop columns with more than 50% Na values
+water <- df[, colMeans(is.na(df)) <= 0.5]
+skim(water)
+```
+In the above process, `TPC_uM`, `TPN_uM`, `TPP_uM`, and `TSS_mg_per_L` columns were droped due to having NAs higher than the 50% threshold.
+
+In the next step, I chose to use summarizing with `na.rm = TRUE` instead of listwise deletion because it retains rows with missing data but excludes missing values during calculations, preserving more data overall. This approach is particularly useful when missing values are scattered across variables, ensuring that we maximize the use of available data for each site.
+
+Group the data by site and calculate summary statistics (e.g., mean) for each variable. Use the `group_by()` and `summarize()` functions for this step. 
+```{r}
+# summarize mean variable by sites
+by_site <- water %>% 
+  group_by(site_code) %>% 
+  summarize(across(where(is.numeric),
+                   ~mean(., na.rm=TRUE))) %>% 
+  ungroup()
+```
+
+### Step 3: Compute Euclidean Distance
+Use the dist() function to calculate the Euclidean distance matrix for the summarized data.
+
+```{r}
+# scale the numeric data
+by_site_scaled <- by_site %>% 
+  select(where(is.numeric)) %>% 
+  scale()
+
+# Add site code back to scaled data
+rownames(by_site_scaled) <- by_site$site_code
+rownames(by_site) <- by_site$site_code
+# Compute dissimilarity values (Euclidean distance):
+euc_distance_scaled <- stats::dist(by_site_scaled, method = "euclidean")
+euc_distance <- stats::dist(by_site, method="euclidean")
+#euc_distance
+```
+
+### Step 4: Perform Hierarchical Clustering with Complete Linkage Method
+Use the hclust() function to perform clustering with the complete linkage method. Optionally, repeat with the single linkage method for comparison.
+```{r}
+# Hierarchical clustering with complete linkage
+hc_complete_scaled <- hclust(euc_distance_scaled, method="complete")
+hc_complete <- hclust(euc_distance, method="complete")
+```
+Use the plot() function to create a dendrogram. Add a title and labels for clarity.
+```{r}
+p_complete <- ggdendrogram(hc_complete, rotate=TRUE)+
+  theme_minimal()+
+  labs(title="Dendrogram of Hierarchical Clustering (complete linkage)",
+       x = "Site")
+#p_complete
+
+p_complete_scaled <- ggdendrogram(hc_complete_scaled, rotate=TRUE)+
+  theme_minimal()+
+  labs(title="Dendrogram of Hierarchical Clustering (complete linkage)",
+       x = "Site")
+p_complete + p_complete_scaled
+```
+**Questions**: should I have scaled? 
+
+### Step 5: Perform Hierarchical Clustering with Single Linkage Method
+Repeat with the single linkage method for comparison.
+```{r}
+hc_single <- hclust(euc_distance_scaled, method="single") 
+```
+Use the `dendextend` package to create a tanglegram that compares the dendrograms from complete and single linkage.
+```{r}
+p_single<-ggdendrogram(hc_single, 
+             rotate = TRUE) +
+  theme_minimal() +
+  labs(title = "Dendrogram of Hierarchical Clustering (single linkage)",
+       x = "Country")
+#p_single
+
+
+```
+
+### Step 6: Compare Linkage Methods
+
+```{r}
+# convert hclust result for dendrograms
+dend_complete <- as.dendrogram(hc_complete_scaled)
+dend_single <- as.dendrogram(hc_single)
+# plot tanglegram
+tanglegram(dend_complete,
+           dend_single,
+           main="Tanglegram: Complete vs Single Linkage",
+           color_lines = c("darksalmon", "lightblue"),
+           lwd = 1)
+```
+
+conclusion
+
+
+
+
