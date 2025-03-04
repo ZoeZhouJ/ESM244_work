@@ -1,0 +1,316 @@
+---
+title: "Forest Fire Prediction using Random Forest Regression"
+author: "Zoe Zhou"
+format: 
+  html:
+    code-fold: true
+    embed-resources: true
+    toc: true
+execute:
+  warning: false
+  message: false
+theme: minty
+---
+![Photo of wildfire in Portugal, sourced from phys.org ](https://scx1.b-cdn.net/csz/news/800a/2019/oftenafireis.jpg)
+
+### Overview
+
+This project aims to develop a Random Forest Regression model to predict forest fire burned area using a comprehensive set of climate, spatial, and environmental variables. Inspired by the research of Paulo Cortez and Aníbal Morais, the analysis will replicate their approach to forest fire prediction. By tuning the model and comparing results with the original research, the project seeks to provide insights into forest fire dynamics and support more effective fire management strategies.
+
+### Data Summary
+
+The forest fire data concerns burned areas of the forests in Montesinho Natural park due to forest fires. It was collected from January 2000 to December 2003, containing 517 instances and 13 features. Complete dataset can be downloaded from [UC Irvine Machine Learning Repository](https://archive.ics.uci.edu/dataset/162/forest+fires). 
+
+The feature details are given below:
+
+| Variable | Description | Range |
+|----------|-------------|-------|
+| X | x-axis spatial coordinate within the Montesinho park map | 1 to 9 |
+| Y | y-axis spatial coordinate within the Montesinho park map | 2 to 9 |
+| month | month of the year | 'jan' to 'dec' |
+| day | day of the week | 'mon' to 'sun' |
+| FFMC | FFMC index from the FWI system | 18.7 to 96.20 |
+| DMC | DMC index from the FWI system | 1.1 to 291.3 |
+| DC | DC index from the FWI system | 7.9 to 860.6 |
+| ISI | ISI index from the FWI system | 0.0 to 56.10 |
+| temp | temperature in Celsius degrees | 2.2 to 33.30 |
+| RH | relative humidity in % | 15.0 to 100 |
+| wind | wind speed in km/h | 0.40 to 9.40 |
+| rain | outside rain in mm/m² | 0.0 to 6.4 |
+| area | burned area of the forest (in ha) | 0.00 to 1090.84 |
+
+
+*Note area output variable is very skewed towards 0, thus it may make sense to model with the logarithm transform.
+
+**Data Citation**:
+
+Cortez, P. & Morais, A. (2007). Forest Fires [Dataset]. UCI Machine Learning Repository. https://doi.org/10.24432/C5D88D.
+
+### Analysis Outline
+
+1. Exploratory Data Analysis
+2. Data Preprocessing
+3. Build Random Forest Model
+4. Tune Hyperparameters
+5. Train on Best Model
+6. Test Model Prediction
+7. Feature Importance Analysis
+
+
+### Set Up 
+The following libraries will be used for data manipulation, visualization, and building regression models. 
+```{r}
+library(tidymodels)
+library(tidyverse)
+library(ggcorrplot)
+library(knitr)
+library(kableExtra)
+library(here)
+library(patchwork)
+library(skimr)
+library(vip)
+```
+
+We import the forest fire dataset using `read_csv()`, converting spatial and temporal variables to factors and applying a `log(x+1)` transformation to the burned area to normalize its skewed distribution.
+
+<details>
+<summary>Click here to expand summary table</summary>
+
+```{r}
+# Import data and factorize/transform variables
+fire_df <- read_csv(here('data','forestfires.csv')) %>% 
+  janitor::clean_names() %>% 
+  mutate(
+    across(c(x, y, month, day), factor),
+    area_log = log(area+1) # handling skewed data and zero values
+  ) %>% 
+  select(-area)
+# Check factorized variables
+skim(fire_df)
+```
+</details>
+
+### Exploratory Analysis
+
+Before we build our models, let's check the correlation of the target variable with the other variables. 
+
+```{r}
+#| fig-cap: "Figure 1: Pairwise Correlation Heatmap of Fire Data"
+
+# Select numeric columns for correlation analysis
+numeric_features <- fire_df[sapply(fire_df, is.numeric)]
+
+# Compute the correlation matrix
+cor_matrix <- cor(numeric_features, use = "complete.obs")
+
+# Create df
+cor_df <- as.data.frame(as.table(cor_matrix))
+
+# Create the heatmap
+ggplot(cor_df, aes(Var1, Var2, fill = Freq)) +
+  geom_tile(color = "white") +  # Add gridlines
+  scale_fill_gradient2(low = "lightblue", high = "#964B00", mid = "white", midpoint = 0, 
+                       limit = c(-1, 1), space = "Lab", name = "Correlation") +
+  labs(title = "Correlation Heatmap of Soil Data", x = "", y = "") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+```
+
+From the correlation matrix, features from the fire index variable grouping (`ffmc`,`dmc`, `dc`, `isi`) are highly correlated with each others as well as the `temp` feature. The heatmap reveals little correlation between wind, rain, and burned area, necessitating a more in-depth investigation of their potential relationships.
+
+### Data Preprocessing & Build Model
+
+Choose STFWI: all features variable groupings to build a random forest model using `tidymodels` 
+
+(Optional: Do each grouping and compare to a multiple regression. Try using purrr or for loops to knock it out faster)
+
+1. Split training and testing data
+2. Build recipe
+3. Set engine
+4. Set workflow
+
+```{r}
+set.seed(123)
+# Split data into training and testing
+fire_split <- initial_split(fire_df, prop = 0.7)
+fire_train <- training(fire_split)
+fire_test <- testing(fire_split)
+
+# Build recipe 
+fire_recipe <- recipe(area_log ~ ., data = fire_train) %>% 
+  step_zv(all_predictors()) %>% 
+  step_corr(all_numeric(), threshold = 0.9)
+
+# Set model engine
+fire_rf <- rand_forest(mtry=tune(), trees=1000, min_n=tune()) %>% 
+  set_engine('ranger') %>% 
+  set_mode('regression')
+
+# Set workflow
+fire_workflow <- workflow() %>% 
+  add_recipe(fire_recipe) %>% 
+  add_model(fire_rf)
+```
+
+
+### Tune Model with Hyperparameter Grid
+Tune your model by selecting the best performing `mtry` and `min_n` random forests variable. Select the best performing model based on the Mean Absolute Error Metric (mae in tidymodels, called MAD in the paper). Be judicious in the number of grids to tune over! Keep it small (~12) otherwise it will take a while to render your html!
+
+The `expand_grid` function is a great way to create a grid of all possible combinations of parameters. We'll use the `tune_grid` function to test all these combinations. We'll use 5 fold cross validation to test the model.
+
+Rationale behind param grid: For the random forest model, we selected a parameter grid for `mtry` ranging from 4 to 12, representing a reasonable subset of predictors to consider at each split, balancing between model complexity and computational efficiency. The `min_n` values were chosen between 2 and 6, allowing the model to explore different levels of tree node size, which helps prevent overfitting while maintaining sufficient granularity to capture meaningful patterns in the forest fire dataset. We also used default grid in r to tune the model. 
+
+```{r}
+# Set param grid
+rf_grid = expand_grid(
+  mtry = seq(4, 12, by=2),
+  min_n = seq(2, 6, by=2)
+)
+
+# Tune through param grid
+rf_res_1 <- tune_grid(
+  fire_workflow,
+  grid = rf_grid,
+  resample = vfold_cv(fire_train, v=5),
+  control=control_grid(save_workflow = TRUE),
+  metrics = metric_set(mae)
+) 
+
+```
+
+### Finalize Best Model and Compare with Paper
+Select the best performing model based on the Mean Absolute Error Metric (mae in tidymodels, called MAD in the paper). 
+
+Visualize how model performance change with different parameters through a default grid. 
+<details>
+<summary>Click here to expand visualization</summary>
+
+```{r}
+#| label: fig_tune
+#| fig-cap: "The MAE is lowest when mtry is 4, and min_n is 2"
+# Tune through default grid
+rf_res <- tune_grid(
+  fire_workflow,
+  grid = 12,
+  resample = vfold_cv(fire_train, v=5),
+  control=control_grid(save_workflow = TRUE),
+  metrics = metric_set(mae)
+) 
+
+rf_res %>% 
+  collect_metrics() %>% 
+  filter(.metric == "mae") %>% 
+  select(mean, min_n, mtry) %>% 
+  pivot_longer(min_n:mtry,
+               values_to = 'value',
+               names_to = 'parameter') %>% 
+  ggplot(aes(value, mean, color = parameter))+
+  geom_point(show.legend=FALSE)+
+  facet_wrap(~parameter, scales = 'free_x')+
+  labs(x=NULL, y = "MAE")
+```
+</details>
+
+Finalize the best performing model using manually defined param grid. Then predict the outcomes on the testing data. 
+```{r}
+# Select best hyperparameters
+fire_best <- select_best(rf_res_1, metric="mae")
+kable(fire_best)
+
+# finalize model
+rf_final <- finalize_model(fire_rf, fire_best)
+
+# Finalize workflow
+final_wf <- workflow() %>%
+  add_recipe(fire_recipe) %>%
+  add_model(rf_final)
+
+# Fit model with full data
+final_res <- final_wf %>% 
+  last_fit(fire_split)
+
+# Make prediction 
+final_pred <- final_res$.predictions[[1]]
+```
+
+The overall performance is computed by a global metric: Mean Absolute Error (MAE), which can be calculated as: 
+
+
+$$MAE = \frac{1}{N} \sum_{i=1}^{N} |y_i - \hat{y}_i|$$
+
+Compare your results to those in the paper (table 3). Did tuning the random forest yield better results? 
+
+
+```{r}
+comparable_mae <- final_pred %>% 
+  mutate(
+    .pred = exp(.pred),
+    area = exp(area_log)
+  ) %>% 
+  yardstick::mae(truth = area, estimate=.pred)
+
+kable(comparable_mae)
+```
+
+
+The predictive results in terms of Mean Absolute Error (MAE) performed better in my model compared to the paper. My model achieved an MAE of 8.17, while the best model from the paper resulted in an MAE of 13.07 with the same STFWI groupings of variables in their model.
+
+Results of the random forests: 
+```{r}
+
+
+# Summarize into table
+rf_details <- data.frame(
+  Parameter = c(
+    "Number of Trees", 
+    "Sample Size", 
+    "Number of Independent Variables",
+    "Mtry", 
+    "Min Node Size",
+    "MAE",
+    "Out-of-Bag Error"
+  ),
+  Value = c(
+    1000,  # from model specification
+    nrow(fire_train),  # training data size
+    ncol(fire_train) - 1,  # number of predictors
+    fire_best$mtry,  # best mtry from tuning
+    fire_best$min_n,  # best min_n from tuning
+    round(comparable_mae$.estimate, 4),  # MAE from model comparison
+    round(final_res$.workflow[[1]]$fit$fit$fit$prediction.error, 4)  # OOB error
+  )
+)
+
+# Create a nice table
+kable(rf_details, 
+      caption = "Random Forest Model Details",
+      col.names = c("Parameter", "Value")) %>% 
+  kable_styling()
+
+
+```
+
+
+### Importance Analysis
+Conduct a variable importance analysis using the `vip` package on your final model. Which variables contribute the most to your model predictions? Do these make sense?
+```{r}
+#| fig-cap: "Feature Permutation Importance"
+rf_final |>
+  set_engine('ranger',importance='permutation') %>%  
+  fit(area_log~.,
+      data=juice(prep(fire_recipe))) %>%  
+  vip::vip(geom='col') +
+  labs(
+    title = "Variable Importance in Forest Fire Burned Area Prediction"
+  ) +
+  theme_minimal() 
+```
+
+
+### Conclusion
+
+The preprocessing recipe eliminated FFMC and days features due to high correlation and limited predictive value. The Drought Code (DC) index emerged as the most critical predictor, accounting for 0.15 of the model's importance. Temperature ranked second, highlighting the profound impact of thermal conditions on fire dynamics. Month followed as the third most important variable, revealing seasonal variations in burned area.
+ 
+Features with negative or zero importance—including rainfall, spatial coordinates, ISI, and wind—suggest potential statistical noise, indicating these variables contribute minimally to the model's predictive power. This is surprising because I had initially expected wind to contribute as an important predictor.
+
+This finding emphasizes the importance of rigorous feature selection in developing robust predictive models for forest fire burned area.
