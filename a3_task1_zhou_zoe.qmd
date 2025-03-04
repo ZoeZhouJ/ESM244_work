@@ -11,7 +11,7 @@ execute:
   message: false
 theme: Flatly
 ---
-![Map of the SBC LTER study domain](https://sbclter.msi.ucsb.edu/assets/img/research/map_forest_composite.png)
+![Map of the SBC LTER study domain, sourced from UCSB](https://sbclter.msi.ucsb.edu/assets/img/research/map_forest_composite.png)
 
 ### About
 
@@ -33,7 +33,7 @@ Santa Barbara Coastal LTER and J. Melack. 2019. SBC LTER: Land: Stream chemistry
 5. Hierarchical clustering with single linkage
 6. Generate tanglegram
 
-### Step 1. Set Up and Data Summary
+### 1. Set Up and Data Summary
 
 The following libraries will be used for data manipulation, visualization, and clustering. 
 
@@ -49,7 +49,7 @@ library(dendextend)
 library(ggdendro)
 ```
 
-Load the dataset and convert -999 values to NA as specified in the dataset documentation. Provide data summary after preliminary date exploration.
+
 
 | **Column Name**          | **Definition**                                                                                                  |
 |---------------------------|----------------------------------------------------------------------------------------------------------------|
@@ -67,6 +67,8 @@ Load the dataset and convert -999 values to NA as specified in the dataset docum
 | `Spec_Cond_uS_per_cm`    | Specific conductivity (measured at 25°C in micro-Siemens per cm, uS/cm)                                        |
 
 
+Load the dataset and convert -999 values to NA as specified in the dataset documentation. Provide data summary after preliminary date exploration.
+
 <details>
 <summary>Click here to expand summary table</summary>
 
@@ -78,15 +80,16 @@ skim(df)
 ```
 </details>
 
-### Step 2: Data Wrangling 
+### 2. Data Wrangling 
 
 Note that this dataset contains a lot of NAs. Identify columns with more than 50% missing values and drop them. Use `summary()` to inspect the dataset and decide how to handle the remaining missing values (e.g., listwise deletion or summarizing with `na.rm = TRUE`).
 
 ```{r}
 # drop columns with more than 50% Na values
 water <- df[, colMeans(is.na(df)) <= 0.5]
-skim(water)
+#skim(water)
 ```
+
 In the above process, `TPC_uM`, `TPN_uM`, `TPP_uM`, and `TSS_mg_per_L` columns were droped due to having NAs higher than the 50% threshold.
 
 In the next step, I chose to use summarizing with `na.rm = TRUE` instead of listwise deletion because it retains rows with missing data but excludes missing values during calculations, preserving more data overall. This approach is particularly useful when missing values are scattered across variables, ensuring that we maximize the use of available data for each site.
@@ -101,80 +104,113 @@ by_site <- water %>%
   ungroup()
 ```
 
-### Step 3: Compute Euclidean Distance
-Use the dist() function to calculate the Euclidean distance matrix for the summarized data.
+### 3. Compute Euclidean Distance
+Use the `dist()` function to calculate the Euclidean distance matrix for the summarized data.
 
 ```{r}
 # scale the numeric data
 by_site_scaled <- by_site %>% 
   select(where(is.numeric)) %>% 
-  scale()
+  scale() %>% 
+  as.data.frame()
 
 # Add site code back to scaled data
 rownames(by_site_scaled) <- by_site$site_code
-rownames(by_site) <- by_site$site_code
+
 # Compute dissimilarity values (Euclidean distance):
 euc_distance_scaled <- stats::dist(by_site_scaled, method = "euclidean")
-euc_distance <- stats::dist(by_site, method="euclidean")
-#euc_distance
+
+# euc_distance_scaled
 ```
 
-### Step 4: Perform Hierarchical Clustering with Complete Linkage Method
-Use the hclust() function to perform clustering with the complete linkage method. Optionally, repeat with the single linkage method for comparison.
+### 4. Complete Linkage Clustering
+Use the `hclust()` function to perform clustering with the complete linkage method. Optionally, repeat with the single linkage method for comparison.
 ```{r}
 # Hierarchical clustering with complete linkage
 hc_complete_scaled <- hclust(euc_distance_scaled, method="complete")
-hc_complete <- hclust(euc_distance, method="complete")
-```
-Use the plot() function to create a dendrogram. Add a title and labels for clarity.
-```{r}
-p_complete <- ggdendrogram(hc_complete, rotate=TRUE)+
-  theme_minimal()+
-  labs(title="Dendrogram of Hierarchical Clustering (complete linkage)",
-       x = "Site")
-#p_complete
-
-p_complete_scaled <- ggdendrogram(hc_complete_scaled, rotate=TRUE)+
-  theme_minimal()+
-  labs(title="Dendrogram of Hierarchical Clustering (complete linkage)",
-       x = "Site")
-p_complete + p_complete_scaled
-```
-**Questions**: should I have scaled? 
-
-### Step 5: Perform Hierarchical Clustering with Single Linkage Method
-Repeat with the single linkage method for comparison.
-```{r}
-hc_single <- hclust(euc_distance_scaled, method="single") 
-```
-Use the `dendextend` package to create a tanglegram that compares the dendrograms from complete and single linkage.
-```{r}
-p_single<-ggdendrogram(hc_single, 
-             rotate = TRUE) +
-  theme_minimal() +
-  labs(title = "Dendrogram of Hierarchical Clustering (single linkage)",
-       x = "Country")
-#p_single
-
 
 ```
-
-### Step 6: Compare Linkage Methods
-
+Use the `plot()` function to create a dendrogram. Add a title and labels for clarity.
 ```{r}
-# convert hclust result for dendrograms
+#| fig-cap: "Figure 1: Dendrogram of Complete Linkage Clustering"
 dend_complete <- as.dendrogram(hc_complete_scaled)
-dend_single <- as.dendrogram(hc_single)
-# plot tanglegram
-tanglegram(dend_complete,
-           dend_single,
-           main="Tanglegram: Complete vs Single Linkage",
-           color_lines = c("darksalmon", "lightblue"),
-           lwd = 1)
+dend_complete %>% 
+  set("branches_k_color", k=10) %>% 
+  plot(main="Dendrogram of Complete Linkage Clustering",
+       xlab="Site IDs"
+      )
+
 ```
 
-conclusion
+### 5. Single Linkage Clustering
+Repeat with the single linkage method for comparison. 
+```{r}
+#| fig-cap: "Figure 2: Dendrogram of Single Linkage Clustering"
+hc_single <- hclust(euc_distance_scaled, method="single") 
 
+# convert hclust result for dendrograms
+dend_single <- as.dendrogram(hc_single)
+
+# Plot single linkage dendrogram
+dend_single %>% 
+  set("branches_k_color", k=13) %>% 
+  plot(main="Dendrogram of Single Linkage Clustering",
+       xlab="Site IDs"
+      )
+```
+
+
+### 6. Compare Linkage Methods
+Use the `dendextend` package to create a tanglegram that compares the dendrograms from complete and single linkage. A tanglegram plot gives two dendrogram, one facing the other, and having their labels connected by lines.
+
+The methods differ in respect to how they define proximity between any two clusters at every step. In single linkage, the proximity between two clusters is determined by the distance between their two closest observations. In contrast, in complete linkage, the proximity between two clusters is measured by the maximum distance between any two points in the clusters.
+
+```{r}
+#| fig-cap: "Figure 3: Tanglegram of Two Clustering Method"
+# plot tanglegram and improve layout with untangle function
+untangle(dend_complete, dend_single, method = "step1side") %>% 
+  tanglegram(
+             main_left ="Complete Linkage",
+             main_right = "Single Linkage",
+             common_subtrees_color_lines = TRUE,
+             common_subtrees_color_branches=TRUE,
+             highlight_distinct_edges = TRUE,
+             lwd = 1) 
+
+# makes global comparison of two dendrograms trees
+all.equal(dend_complete, dend_single)
+```
+
+
+Prune trees for better visualization
+```{r}
+#| fig-cap: "Figure 4: Clustering of Sites by Nitrogen Concentration"
+# Prepare df for plotting
+by_site_scaled <- by_site_scaled %>% 
+  as.data.frame() %>% 
+  rownames_to_column(var = "site_code")
+
+# Prune the dendrogram to show only top 5 clusters
+hc_cut <- cutree(hc_complete_scaled, k=5)
+
+# Add cluster number to the data
+by_site_clustered <- by_site_scaled %>% 
+  mutate(cluster = hc_cut)
+
+# Plot histogram
+ggplot(by_site_clustered, aes(x = reorder(site_code, cluster), y = tdn_uM, fill = factor(cluster)))+
+  geom_col()+
+  coord_flip()+
+  theme_minimal()+
+  labs(x="Site IDs", y="Total dissolved nitrogen (uM/L)", fill="Cluster")
+```
+
+### Conclusion
+The dendrograms from Figure 1 and 2 reveal distinct clusters of sites based on water chemistry. SP02, MC00, and AB00 merge at a low height, indicating highly similar water chemistry, likely due to shared environmental conditions or pollution sources. Similarly, RS02 and HO00 merge at a low height, confirming their high similarity. ON02 clusters with this group, showing significant similarities in water chemistry.
+
+In contrast, BC02 and DV01 are the last sites to merge, indicating their water chemistry is distinctly different from the others. This suggests unique environmental factors or pollution sources at these sites. The dendrogram’s consistent groupings, regardless of the linkage method. 
+
+The bar chart in Figure 4 visually represents nitrogen levels across various sites, offering a quantitative measure of water chemistry differences that align with the dendrogram’s clustering patterns. Sites in Cluster 1 (Red) exhibit intermediate nitrogen levels, reflecting their moderate similarity in water chemistry. In contrast, Cluster 2 (Green), which includes only BC02, shows extremely high nitrogen concentrations, explaining its distinct grouping in the dendrogram. 
 
 
 
