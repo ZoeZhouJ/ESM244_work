@@ -12,7 +12,7 @@ execute:
   message: false
 theme: minty
 ---
-Willamette River Fish Bypass, Photo Credit:![Portland General Electric](https://images.ctfassets.net/416ywc1laqmd/6b9DU1zkcdYvm4ypFzOL1u/038dc44827e3ccdd13edaf7f50403781/willamette-river-fish-bypass.jpg)
+![Willamette River Fish Bypass, Photo Credit: Portland General Electric](https://images.ctfassets.net/416ywc1laqmd/6b9DU1zkcdYvm4ypFzOL1u/038dc44827e3ccdd13edaf7f50403781/willamette-river-fish-bypass.jpg)
 
 ### Overview
 
@@ -76,10 +76,11 @@ skim(fish_df)
 
 </details>
 
-#### Data Visualization
-Part 1: Plot time series of adult passage for Coho, Jack Coho, and Steelhead salmon.
+### Data Visualization
+:::{.panel-tabset}
+## Daily Time Series Plot 
 ```{r}
-#| fig-cap: "Figure 1: Time Series Plots of Salmon Adult Passage"
+#| fig-cap: "Figure 1: Time Series of Adult Passage for Coho, Jack Coho, and Steelhead salmon."
 # Prepare data for plotting
 fish_long <- fish_ts %>% 
   janitor::clean_names() %>% 
@@ -89,6 +90,7 @@ fish_long <- fish_ts %>%
     names_to = "species",
     values_to = "counts"
   )
+
 # Create plot
 ggplot(fish_long, aes(x=date, y=counts, color=species)) +
   geom_line() +
@@ -102,8 +104,74 @@ ggplot(fish_long, aes(x=date, y=counts, color=species)) +
 ```
 From the time series plots in Figure 1, we can observe the following observations:
 
-- Relatively low abundance of Jack Coho salmon, with smaller and less frequent peaks compared to the other species.
+- Steelhead consistently has higher counts compare to Coho and Jack Coho salmon. There is relatively low abundance of Jack Coho salmon, with smaller and less frequent peaks compared to the other species.
 - All three species exhibit seasonal peaks in their counts. Steelhead salmon displays broader and more frequent peaks over time, suggesting a longer migration period.
-- Steelhead consistently has higher counts compare to Coho and Jack Coho salmon.
+- There is increasing trend in the counts of Coho salmon after 2008, with higher peaks observed in subsequent years.
 
+## Seasonplots
+A seasonplot can help point out seasonal patterns, and help to glean insights over the years. We'll use `feasts::gg_season()` to create an exploratory seasonplot, which has month on the x-axis, salmon counts on the y-axis, and each year is its own series (mapped by line color).
+```{r}
+#| fig-cap: "Figure 2: Seasonplots of Daily Counts for Salmon Passage by Species"
+fish_long %>% 
+  gg_season(y=counts, pal=hcl.colors(n=10)) + 
+  theme_light()+
+  labs(title='Seasonplots of Daily Counts for Salmon Passage by Species',
+    x="month",
+       y="Species Counts")
 
+```
+Figure 2 displays the seasonal variation in the counts of salmon species across all years, with each line representing a specific year and highlighting recurring monthly patterns. Since the daily counts were too stochastic and busy, especially for steelhead salmon, I opted to use monthly means for clearer interpretation. 
+
+Seasonplots with monthly means:
+```{r}
+#| fig-cap: "Figure 3: Seasonplots of Monthly Average Counts for Salmon Passage by Species"
+fish_month <- fish_long %>% 
+  index_by(yr_mo = ~yearmonth(.)) %>% 
+  group_by(species) %>% 
+  summarize(month_mean = mean(counts, na.rm=TRUE)) %>% 
+  ungroup()
+
+#fish_month
+fish_month %>% 
+  gg_season(y=month_mean, pal=hcl.colors(n=10)) + 
+  theme_light()+
+  labs(title='Seasonplots of Monthly Average Counts for Salmon Passage by Species',
+       x="month",
+       y="Species Counts")
+
+```
+Figure 2 and 3 shows the monthly variation in counts for three salmon species across multiple years:
+
+- Both Coho and Jack Coho salmon show a sharp and well-defined seasonal peak in September, with Coho consistently having significantly higher peak counts compared to Jack Coho, as also seen in the original time series.
+- Steelhead salmon exhibit a broader seasonal pattern, with counts steadily increasing from January to a peak in May or June, followed by a rapid decline, suggesting a longer migration period.
+- Interannual variability is noticeable, particularly in Coho, where a sharper increase in counts is observed in later years.
+
+## Annual Counts
+```{r}
+#| fig-cap: "Figure 4: Plot of Annual Counts of Fish Passage by Species"
+# Prep data for plotting
+fish_yr <- fish_long %>% 
+  index_by(year = ~year(.)) %>%
+  group_by(species) %>% 
+  summarize(annual_total = sum(counts)) %>% 
+  ungroup()
+# Convert year column to factor
+fish_yr$year = as.factor(fish_yr$year)
+
+fish_yr %>%
+  ggplot(aes(x = year, y = annual_total, color = species, group = species)) +  # Explicitly group by species
+  geom_line() +
+  theme_minimal() +
+  labs(
+    title = "Annual Total Counts of Fish Passage by Species",
+    x = "Year",
+    y = "Counts"
+  ) +
+  scale_color_brewer(palette = 'Set2')
+
+  
+```
+- Annual Steelhead counts show significant interannual variability, with drop of 25000 counts between 2002 and 2003. 
+- Jack Coho salmon consistently has the lowest counts among the three species, with minimal variation over the years. 
+- Coho counts remain relatively low until 2008, after which there's a sharp increas, reaching a significant peak with annual counts over 25,000 in 2010.
+:::
