@@ -1,0 +1,109 @@
+---
+title: "Forecasting Salmon Runs: A Time Series Analysis of Willamette Falls Fish Ladder Data"
+author: "Zoe Zhou"
+date: today
+format: 
+  html:
+    code-fold: true
+    embed-resources: true
+    toc: true
+execute:
+  warning: false
+  message: false
+theme: minty
+---
+Willamette River Fish Bypass, Photo Credit:![Portland General Electric](https://images.ctfassets.net/416ywc1laqmd/6b9DU1zkcdYvm4ypFzOL1u/038dc44827e3ccdd13edaf7f50403781/willamette-river-fish-bypass.jpg)
+
+### Overview
+
+The goal of this analysis is to visualize time series data of fish passage at the Willamette Falls fish ladder to identify trends, seasonal patterns, and annual variations in fish passage. Additionally, the analysis includes forecasting using the Holt-Winters method to predict future trends in salmon runs, providing critical information for watershed management and fish recovery efforts.  
+
+#### Background
+Fish passage at Willamette Falls is critical for the survival of Oregon’s wild salmon and steelhead, which are on the brink of extinction due to dams blocking access to spawning habitats and degrading river ecosystems. With populations at just 1–2% of their historic levels, this analysis helps uncover migration trends and forecast future passage, providing valuable insights to guide recovery efforts, improve watershed management, and ensure these iconic species are protected for future generations.
+
+#### Data Summary
+
+This project explores adult fish passage data recorded at the Willamette Falls fish ladder on the Willamett River, Oregon from 2001 to 2010. The dataset provides valuable insights into the migration patterns of five salmon species: Chinook, Jack Chinook, Steelhead, Coho, and Jack Coho. 
+
+**Data Citation**:
+
+U.S. Army Corps of Engineers, NWD, et al. *DART Adult Passage Counts Daily for All Species*. Data accessed via [Columbia River DART (Data Access in Real Time)](https://www.cbr.washington.edu/dart/query/adult_proj_sum) on January 25, 2023.
+
+#### Analysis Outline
+
+1. Exploratory Data Analysis
+2. Data Preprocessing
+3. Visualization of Time Series
+4. Visualization of Seasonplots for each species
+5. Plot Annual Totals for Fish Passage
+6. Apply Holt-Winters Forecasting
+7. Summarize Trends and Patterns
+
+### Set Up 
+The following libraries will be used for data manipulation, visualization, and building regression models. 
+```{r}
+library(tidyverse)
+library(here)
+library(lubridate)
+library(tsibble)
+library(feasts)
+library(fable)
+library(kableExtra)
+library(patchwork)
+library(skimr)
+```
+
+Import data, replace NaN with zero, convert Date column from character to `data` and convert df to tsibble using the `as_tsibble()` function. 
+```{r}
+# Import data
+fish_df <- read_csv(here('data', 'willamette_fish_passage.csv')) %>% 
+  replace(is.na(.),0) %>% 
+  janitor::clean_names()
+
+# Convert to ts
+fish_ts <- fish_df %>% 
+  mutate(date = mdy(date)) %>% 
+  as_tsibble(key = NULL,
+             index = date) %>% 
+  replace(is.na(.), 0)
+```
+Conduct preliminary data exploration 
+<details>
+<summary>Click here to expand summary table</summary>
+```{r}
+skim(fish_df)
+```
+
+</details>
+
+#### Data Visualization
+Part 1: Plot time series of adult passage for Coho, Jack Coho, and Steelhead salmon.
+```{r}
+#| fig-cap: "Figure 1: Time Series Plots of Salmon Adult Passage"
+# Prepare data for plotting
+fish_long <- fish_ts %>% 
+  janitor::clean_names() %>% 
+  select('date', 'steelhead','coho', 'jack_coho') %>% 
+  pivot_longer(
+    cols = -date,
+    names_to = "species",
+    values_to = "counts"
+  )
+# Create plot
+ggplot(fish_long, aes(x=date, y=counts, color=species)) +
+  geom_line() +
+  labs(title = "Time Series Plots of Salmon Adult Passage",
+       x = "Time",
+       y = "Counts") +
+  scale_color_brewer(palette = "Set2")+
+  theme_minimal()+
+  facet_wrap(~species,ncol=1)+
+  theme(legend.position='none')
+```
+From the time series plots in Figure 1, we can observe the following observations:
+
+- Relatively low abundance of Jack Coho salmon, with smaller and less frequent peaks compared to the other species.
+- All three species exhibit seasonal peaks in their counts. Steelhead salmon displays broader and more frequent peaks over time, suggesting a longer migration period.
+- Steelhead consistently has higher counts compare to Coho and Jack Coho salmon.
+
+

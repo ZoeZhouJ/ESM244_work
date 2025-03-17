@@ -1,6 +1,9 @@
 ---
 title: "Florida Palmetto Species Classifier"
 author: "Zoe Zhou"
+date: 02-18-2025
+image: preview.jpg
+categories: [R, Modeling, Quarto]
 format: 
   html:
     code-fold: true
@@ -77,7 +80,7 @@ library(yardstick)
 From the metadata, code 1 represents Serenoa repens, code 2 represents Sabal etonia. We will first load the dataset and preprocess the data by selecting the relevant columns and removing missing values, then factorize the string type species column into dummy variables: 0 for Serenoa repens and 1 for Sabal etonia.
 ```{r}
 # Load the dataset
-df <- read_csv(here("data", "palmetto.csv"))
+df <- read_csv(here("posts","2025-02-18-plant-classifier","data", "palmetto.csv"))
 # Preprocess data
 df_clean <- df %>% 
   select(species, height, length, width, green_lvs) %>%
@@ -340,16 +343,6 @@ model_final <- log_1_final %>%
   
 model_table <- model_final %>%
   tidy() %>% 
-  mutate(
-    term = case_when(
-      term == "height" ~ "Maximum Height",
-      term == "length" ~ "Maximum Canopy Length",
-      term == "width" ~ "Maximum Canopy Width",
-      term == "green_lvs" ~ "Count of Green Leaves",
-      TRUE ~ term
-    ),
-    p.value = ifelse(as.numeric(p.value) < 0.01,'<0.01', as.character(p.value))
-  ) %>% 
   mutate(p.value = as.character(p.value)) %>%
   kable(format = "html", caption = "Logistic Regression Model Results") %>%
   kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover"))
@@ -381,10 +374,7 @@ summary_table <- tibble(
   species = c('Serenoa repens','Sabal etonia'),
   correctly_classified = c(TN, TP),
   incorrectly_classified = c(FN, FP),
-  percent_correct = scales::percent(round(
-    c(TN / (TN + FN), TP / (TP + FP)), 2
-    )) 
-)
+  percent_correct = scales::percent(round(correctly_classified / (correctly_classified + incorrectly_classified) * 100, 2))) 
 ```
 
 ```{r}
