@@ -12,7 +12,7 @@ execute:
   message: false
 theme: minty
 ---
-![Willamette River Fish Bypass, Photo Credit: Portland General Electric](https://images.ctfassets.net/416ywc1laqmd/6b9DU1zkcdYvm4ypFzOL1u/038dc44827e3ccdd13edaf7f50403781/willamette-river-fish-bypass.jpg)
+![Willamette River Fish Bypass, Image by danny moore from Pixabay](https://www.renewableenergyworld.com/wp-content/uploads/2025/01/salmon-1107404_1920.jpg)
 
 ### Overview
 
@@ -25,9 +25,7 @@ Fish passage at Willamette Falls is critical for the survival of Oregon’s wild
 
 This project explores adult fish passage data recorded at the Willamette Falls fish ladder on the Willamett River, Oregon from 2001 to 2010. The dataset provides valuable insights into the migration patterns of five salmon species: Chinook, Jack Chinook, Steelhead, Coho, and Jack Coho. 
 
-**Data Citation**:
-
-U.S. Army Corps of Engineers, NWD, et al. *DART Adult Passage Counts Daily for All Species*. Data accessed via [Columbia River DART (Data Access in Real Time)](https://www.cbr.washington.edu/dart/query/adult_proj_sum) on January 25, 2023.
+**Data Citation**: U.S. Army Corps of Engineers, NWD, et al. *DART Adult Passage Counts Daily for All Species*. Data accessed via [Columbia River DART (Data Access in Real Time)](https://www.cbr.washington.edu/dart/query/adult_proj_sum) on January 25, 2023.
 
 #### Analysis Outline
 
@@ -53,11 +51,11 @@ library(patchwork)
 library(skimr)
 ```
 
-Import data, replace NaN with zero, convert Date column from character to `data` and convert df to tsibble using the `as_tsibble()` function. 
+Import data, replace NA values with zero, convert Date column from character to `data` and convert df to tsibble using the `as_tsibble()` function. 
 ```{r}
 # Import data
 fish_df <- read_csv(here('data', 'willamette_fish_passage.csv')) %>% 
-  replace(is.na(.),0) %>% 
+  #replace(is.na(.),0) %>% 
   janitor::clean_names()
 
 # Convert to ts
@@ -67,29 +65,80 @@ fish_ts <- fish_df %>%
              index = date) %>% 
   replace(is.na(.), 0)
 ```
-Conduct preliminary data exploration 
+### Preliminary Data Exploration 
+The original dataset contains multiple empty columns with over 3,000 missing values. Therefore, this study focuses on three salmon species—Coho, Jack Coho, and Steelhead salmon—for further analysis.
+
 <details>
 <summary>Click here to expand summary table</summary>
 ```{r}
 skim(fish_df)
 ```
-
 </details>
 
-### Data Visualization
+#### Decomposition Summary
+
+To better understand the structure of time series data, it's useful to decompose to separately explore contributions of the different components (trend, seasonality, etc). This study employs **Seasonal and Trend Decomposition using LOESS** (Locally Estimated Scatterplot Smoothing), a method for estimating nonlinear relationships. It applies a weighted moving average across all points in the dataset, with weights determined by their distance from the point being averaged. `STL()` function from the `feasts` is used to obtain decomposition.
+
+<details>
+<summary>Click here to expand decomposition plots</summary>
+
 :::{.panel-tabset}
-## Daily Time Series Plot 
+
+## Jack Coho
 ```{r}
-#| fig-cap: "Figure 1: Time Series of Adult Passage for Coho, Jack Coho, and Steelhead salmon."
 # Prepare data for plotting
 fish_long <- fish_ts %>% 
-  janitor::clean_names() %>% 
   select('date', 'steelhead','coho', 'jack_coho') %>% 
   pivot_longer(
     cols = -date,
     names_to = "species",
     values_to = "counts"
   )
+
+# Obtain decomposition
+jack_dcmp <- fish_long %>% 
+  filter(species =='jack_coho') %>% 
+  model(STL(counts~season(period = "1 year") + trend(window = 25)))
+
+# Visualize components
+components(jack_dcmp) %>% 
+  autoplot()+
+  theme_classic()
+```
+
+## Coho Salmon
+```{r}
+# Obtain decomposition
+coho_dcmp <- fish_long %>% 
+  filter(species =='coho') %>% 
+  model(STL(counts~season(period = "1 year") + trend(window = 25)))
+
+# Visualize components
+components(coho_dcmp) %>% 
+  autoplot()+
+  theme_classic()
+```
+
+## Steelhead
+```{r}
+# Obtain decomposition
+jack_dcmp <- fish_long %>% 
+  filter(species =='steelhead') %>% 
+  model(STL(counts~season(period = "1 year") + trend(window = 25)))
+
+# Visualize components
+components(jack_dcmp) %>% 
+  autoplot()+
+  theme_classic()
+```
+
+:::
+</details>
+### Data Visualization
+:::{.panel-tabset}
+## Daily Time Series Plot 
+```{r}
+#| fig-cap: "Figure 1: Time Series of Adult Passage for Coho, Jack Coho, and Steelhead salmon."
 
 # Create plot
 ggplot(fish_long, aes(x=date, y=counts, color=species)) +
@@ -174,4 +223,110 @@ fish_yr %>%
 - Annual Steelhead counts show significant interannual variability, with drop of 25000 counts between 2002 and 2003. 
 - Jack Coho salmon consistently has the lowest counts among the three species, with minimal variation over the years. 
 - Coho counts remain relatively low until 2008, after which there's a sharp increas, reaching a significant peak with annual counts over 25,000 in 2010.
+
+## Forecast
+We use the `ETS()` function from the `fable` package to generate predictions. Exponential smoothing calculates weighted averages of past observations, with the weights decreasing exponentially as the observations become older. Given the change in variance over time, we specify **multiplicative seasonality**, and set `restrict` as `FALSE` to allow function to find best model.
+
+The results show negative counts for Steelhead and Jack Coho salmon, which is unrealistic and indicates that this forecasting method is not suitable for salmon data.
+
+```{r}
+salmon_ts <- fish_ts %>% select(date, coho, jack_coho, steelhead)
+
+# Reshape the data into a long format
+salmon_long <- salmon_ts %>%
+  pivot_longer(cols = c(coho, jack_coho, steelhead), 
+               names_to = "species", 
+               values_to = "counts")
+
+# Fit the ETS model for each species
+
+ets_models <- salmon_long %>%
+  model(ets = ETS(counts~season("M"), restrict=FALSE))
+
+# Generate forecasts for each species 
+forecasts <- ets_models %>%
+  forecast(h = "5 years")
+
+# Plot the forecasts along with historical data
+forecasts %>%
+  autoplot(salmon_long, level = NULL) +
+  labs(
+    title = "Historical and Forecasted Salmon Passage by Species",
+    y = "Counts",
+    x = "Date"
+  ) +
+  theme_minimal()
+
+```
+```{r}
+kable(ets_models, col.names=c("Species","ETS Model(Error, Trend, Seasonality)"), caption = "ETS Models by Species")
+
+```
+
+
+The differences in the ETS models arise because the `ETS()` function automatically selects the best model based on the data for each species. For Jack Coho and Steelhead, the data likely exhibited clear seasonal patterns with varying magnitudes, leading to the selection of a model with multiplicative seasonality. In contrast, Coho data may not show significant seasonal or trend components, so no model were selected.
 :::
+
+### Summary
+
+Forecast results suggest that forcing a seasonal model may not be appropriate. Further exploration is needed to find the correct model for forecasting. Here we use a autocorrelation function to confirm our interpretation. 
+
+Autocorrelation function (ACF) shows how correlated observations within a series are with pervious observations on the same variable. In the context of salmon passage, the ACF helps identify patterns in the monthly average counts of steelhead salmon passing through the ladder over time. This analysis is useful for guiding selection of models to forecast future values in a time series.
+
+<details>
+<summary>Click here to expand ACF plots</summary>
+:::{.panel-tabset}
+## Steelhead
+For Steelhead salmon, I do not expect exponential smoothing (ETS) to be the most effective forecasting method due to its broader and more variable seasonal pattern and significant interannual variability. 
+```{r}
+# autocorrelation for steelhead
+fish_month %>% 
+  filter(species == 'steelhead') %>% 
+  ACF(month_mean) %>% 
+  autoplot() +
+  theme_minimal()+
+  labs(
+    title="ACF plot for Steelhead Salmon Passage",
+    x="lag (in month)",
+    y="autocorrelation coefficient"
+  )
+```
+## Coho 
+For Coho salmon, I do not expect exponential smoothing (ETS) to be the most effective forecasting method due to its broader and more variable seasonal pattern and significant interannual variability. 
+```{r}
+# autocorrelation for steelhead
+fish_month %>% 
+  filter(species == 'coho') %>% 
+  ACF(month_mean) %>% 
+  autoplot() +
+  theme_minimal()+
+  labs(
+    title="ACF plot for Steelhead Salmon Passage",
+    x="lag (in month)",
+    y="autocorrelation coefficient"
+  )
+```
+
+## Jack Coho
+```{r}
+# autocorrelation for steelhead
+fish_month %>% 
+  filter(species == 'jack_coho') %>% 
+  ACF(month_mean) %>% 
+  autoplot() +
+  theme_minimal()+
+  labs(
+    title="ACF plot for Steelhead Salmon Passage",
+    x="lag (in month)",
+    y="autocorrelation coefficient"
+  )
+```
+
+
+For **Jack Coho salmon**, the highest correlation coefficient occurs at lags of **12 months**, indicating seasonality. This suggests that **exponential smoothing** could be a suitable forecasting method. 
+
+:::
+</details>
+
+
+
