@@ -1,0 +1,205 @@
+---
+title: "Text Analysis"
+author: "Zoe Zhou"
+date: today
+format: 
+  html:
+    code-fold: true
+    embed-resources: true
+    toc: true
+execute:
+  warning: false
+  message: false
+theme: minty
+---
+## Overview
+
+In this project, I analyze text data from the New York Times API to explore the language used in articles about **coral bleaching**. The analysis includes word frequency, sentiment analysis, and emotional tone detection. The goal is to understand how this topic is framed in the media, Specifically, we aim to:
+
+- Identify the most frequently used words in the articles.
+- Analyze the sentiment (positive or negative) associated with the articles.
+- Examine the emotional tone (e.g., joy, sadness, anger) conveyed in the text.
+
+
+### Data
+
+The data is obtained from the **New York Times Article Search API**, which provides metadata and text snippets (e.g., headlines, lead paragraphs) for articles. 
+
+**Citation:** New York Times API, Article Search API, accessed March 17, 2025. (2025, March 17). https://developer.nytimes.com/docs/articlesearch-product/1/routes/articlesearch.json
+
+### Outline
+
+1. Data Query
+2. Text Preprocessing
+3. Word Frequency Analysis
+4. Sentiment Analysis
+5. Emotional Tone Analysis
+
+## Set up
+
+Load in libraries and obtain API key from NYT Developers account to access data.
+
+```{r}
+library(jsonlite) #convert results from API queries into R-friendly formats 
+library(tidyverse)
+library(tidytext) #text data management and analysis
+library(ggplot2) #plot word frequencies and publication dates
+library(ggwordcloud)
+
+API_KEY <- "nGF1sqQpicrPJGzZNThJ1VfNKj4BoGnH"
+```
+
+## Data Query 
+
+We query the New York Times API to retrieve articles on coral bleaching published between January 2024 and March 2025. The query URL is constructed using the `fromJSON()` function, which handles the API request and response.
+
+```{r}
+# Set some parameters for query
+term1 <- "coral bleaching" 
+#term2 <- "$bleaching" # use $ to string together separate terms
+begin_date <- "20240101"
+end_date <- "20250301"
+
+# Construct the query url using API operators
+baseurl <- paste0("http://api.nytimes.com/svc/search/v2/articlesearch.json?q=",URLencode(term1),"&begin_date=",begin_date,"&end_date=",end_date,"&facet_filter=true&api-key=",API_KEY, sep="")
+
+# Get initial query
+initialquery <- fromJSON(baseurl)
+#initialquery
+```
+
+There are total of 45 hits from our search, due to limitation I will analyze the text in the first 10 articles for this project. After querying, I need to convert each JSON object to dataframe
+
+```{r}
+maxPages <- 4
+#initiate a list to hold results of our for loop
+pages <- list()
+for(i in 0:maxPages){
+  nytSearch <- fromJSON(paste0(baseurl, "&page=", i), flatten = TRUE) %>% data.frame() 
+  message("Retrieving page ", i)
+  pages[[i+1]] <- nytSearch
+  Sys.sleep(12) }
+```
+The New York Times API provides only the first paragraph of each article. We tokenize this text into individual words using tidytext::unnest_tokens() and clean it by removing stop words, numbers, and possessive suffixes.
+
+```{r}
+# Combine to dataframe
+nytDat <- bind_rows(pages)
+#class(nytDat)
+#names(nytDat)
+#head(nytDat[,1:6])
+# Acquire words from text
+tokenized <- nytDat %>%
+  filter(response.docs.news_desk!="Styles") %>%
+  unnest_tokens(word, response.docs.lead_paragraph) #word is the new column, paragraph is the source
+
+# Load stop words dataset
+data("stop_words")
+
+# Remove stop words from the tokenized data
+tokenized <- tokenized %>%
+  anti_join(stop_words)
+
+# Clean the tokens by removing numbers and possessive suffixes
+tokenized <- tokenized %>%
+  mutate(
+    clean = str_remove_all(word, "[:digit:]") %>%  # Remove all numbers
+            gsub("’s", "", .)                     # Remove possessive suffixes
+  )
+
+# Remove rows with empty strings in the 'clean' column
+tokenized <- tokenized %>%
+  filter(clean != "")
+```
+
+## Word Frequency Analysis
+We calculate the frequency of words in the dataset and visualize the most common words.
+```{r}
+# Graph word counts
+tokenized %>%
+  count(clean, sort = TRUE) %>%
+  filter(n > 3) %>% 
+  mutate(clean = reorder(clean, n)) %>%
+  ggplot(aes(n, clean)) +
+  geom_col() +
+  scale_x_continuous(expand = c(0, 0)) +
+  labs(y = NULL,
+       title="Word counts from Coral News")+
+  theme_classic()
+```
+## Sentiment Analysis
+We use the Bing Sentiment Lexicon to classify words as positive or negative and calculate the sentiment score for each article.
+```{r}
+# Load the bing sentiment lexicon from tidytext
+bing_sent <-  get_sentiments("bing")
+#head(bing_sent)
+
+# Get numerical score of text
+sent_words <- tokenized %>%
+  inner_join(bing_sent, by='word') %>%
+  mutate(sent_num = case_when(sentiment =='negative'~-1,
+                              sentiment =='positive'~1))
+
+# Find summary of the sentiments
+bing_counts <- sent_words %>% 
+  count(sentiment)
+
+# Plot sentiment summary
+ggplot(data=bing_counts, aes(x=sentiment, y=n, fill = sentiment))+
+  geom_col(show.legend = FALSE,width = 0.7)+
+  scale_fill_manual(values = c("positive" = "#00BFC4", "negative" = "#F8766D"))+
+  labs(
+    title = "Sentiment Analysis Results",
+    x = "Sentiment",
+    y = "Word Count",
+    caption = "Data source: Bing Lexicon & New York Times"
+  ) +
+  theme_minimal(base_size = 14)
+
+
+# Calculate mean sentiment
+sent_article <- sent_words %>%
+  group_by(response.docs._id) %>%
+  count(sentiment) %>%
+  pivot_wider(names_from = sentiment, values_from=n)%>%
+  mutate(polarity = positive-negative)
+
+
+# Calculate the mean sentiment score
+mean_polarity <- mean(sent_article$polarity, na.rm = TRUE)
+
+# print the result
+cat("\n", 
+    "==============================\n",
+    "Mean Sentiment Score for Coral News:\n",
+    sprintf("%.2f", mean_polarity),  # Format the score to 2 decimal places
+    "\n==============================\n")
+
+```
+
+
+### Emotional Tone Analysis
+We use the NRC Lexicon to analyze the emotional tone of the articles, identifying words associated with emotions like joy, sadness, anger, and trust.
+```{r}
+nrc_sent <- get_sentiments('nrc')
+nrc_word_counts <- tokenized %>%
+  inner_join(nrc_sent) %>%
+  count(word, sentiment, sort=T)
+  
+# nrc_word_counts    
+
+nrc_word_counts %>%
+  group_by(sentiment) %>%
+  slice_max(n,n=4)%>%
+  ungroup() %>%
+  mutate(word = reorder(word, n))%>%
+  ggplot(aes(n,word,fill = sentiment))+
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales="free_y", ncol=5)+
+  labs(title="Top Words Contributing to Sentiments",
+       x='Contribution to Sentiment', y = NULL)+
+  theme_minimal()
+```
+### Conclusion
+This analysis provides insights into how coral bleaching is discussed in the media. The sentiment analysis reveals the overall tone of the articles is negative, while the emotional tone analysis highlights the specific emotions associated with the topic. 
+
